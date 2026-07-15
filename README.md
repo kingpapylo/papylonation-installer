@@ -13,10 +13,10 @@ A free, self-improving AI agent you can brand as your own. Built on [Hermes Agen
 ## Install (one line)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USER/papylonation-installer/main/install-papylonation.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kingpapylo/papylonation-installer/main/install-papylonation.sh | bash
 ```
 
-Replace `YOUR_USER` with your GitHub username after pushing this repo.
+The one-liner above points at `kingpapylo/papylonation-installer`. If you forked it under a different account, swap the username in the URL.
 Until then, run it from a local copy:
 
 ```bash
