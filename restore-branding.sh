@@ -79,9 +79,15 @@ repl "$SRC/web/src/App.tsx" \
   '{ path: "/mcp", label: "MCP", icon: Plug },' \
   '{ path: "/mcp", label: "App Store", icon: Plug },'
 
-# 5) Rebuild the web bundle so the dashboard serves the rebrand
+# 5) Rebuild the web bundle so the dashboard serves the rebrand.
+#    Tolerant: skip (don't fail the script) if the node/npx toolchain is missing.
 say "Rebuilding dashboard bundle ..."
-( cd "$SRC/web" && $NX vite build ) && say "Dashboard rebuilt."
+if command -v npx >/dev/null 2>&1 || [ -x "$SRC/web/node_modules/.bin/vite" ]; then
+  ( cd "$SRC/web" && $NX vite build ) && say "Dashboard rebuilt." \
+    || say "⚠ build exited non-zero — bundle may be stale; re-run restore-branding.sh later."
+else
+  say "⚠ npx not found — skipped bundle rebuild. Dashboard serves the prebuilt bundle; re-run after installing node."
+fi
 
 # 6) Verify banner label is branded
 if "$PYBIN" -c "from hermes_cli import banner; print(banner.format_banner_version_label())" 2>/dev/null | grep -q "PapyloNation Agent"; then

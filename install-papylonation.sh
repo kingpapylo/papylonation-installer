@@ -123,9 +123,28 @@ version: 1.0.0
 On errors: diagnose and fix automatically, then record the fix as a skill.
 SK
 
-# ---- 9) Copy restore-branding.sh alongside (so it's available) -------
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-[ -f "$SCRIPT_DIR/restore-branding.sh" ] && cp "$SCRIPT_DIR/restore-branding.sh" "$HH/restore-branding.sh"
+# ---- 9) Apply source-level rebrand (CLI banner + dashboard) ----------
+# Fetch restore-branding.sh from the repo if not carried alongside, then run it.
+# This patches the Hermes source strings and rebuilds the dashboard bundle so a
+# fresh install is fully branded without a manual step. Tolerates a missing
+# node toolchain (restore-branding.sh skips the rebuild in that case).
+REPO_RAW="https://raw.githubusercontent.com/kingpapylo/papylonation-installer/main"
+RESTORE_LOCAL="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/restore-branding.sh"
+if [ ! -f "$RESTORE_LOCAL" ]; then
+  RESTORE_LOCAL="$HH/restore-branding.sh"
+  curl -fsSL "$REPO_RAW/restore-branding.sh" -o "$RESTORE_LOCAL" 2>/dev/null \
+    || curl -fsSL "https://raw.githubusercontent.com/kingpapylo/papylonation-installer/main/restore-branding.sh" -o "$RESTORE_LOCAL" 2>/dev/null \
+    || true
+fi
+if [ -f "$RESTORE_LOCAL" ]; then
+  chmod +x "$RESTORE_LOCAL"
+  cp "$RESTORE_LOCAL" "$HH/restore-branding.sh" 2>/dev/null || true
+  say "Applying PapyloNation source rebrand (CLI + dashboard) ..."
+  bash "$RESTORE_LOCAL" 2>&1 | sed 's/^/    /' || \
+    say "⚠ rebrand step reported issues — run: bash $HH/restore-branding.sh"
+else
+  say "⚠ restore-branding.sh not found — skipping source rebrand. Run it manually later."
+fi
 
 say "Done. Launch the agent:   papylonation"
 say "Start live dashboard:     bash $HH/start-dashboard.sh"
