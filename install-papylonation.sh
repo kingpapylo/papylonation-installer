@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =====================================================================
-#  PapyloNation Agent — one-line installer
+#  PapyloNation Agent — one-line installer (cross-platform)
+#  Works on plain Linux AND Termux (Android).
 #  Usage:  curl -fsSL <URL>/install-papylonation.sh | bash
 #  Reproduces the full branded, self-improving agent + live dashboard.
 # =====================================================================
@@ -15,14 +16,38 @@ say() { printf '\033[1;33m⚕ %s\033[0m\n' "$*"; }
 
 say "Installing $BRAND ..."
 
-# 1) Ensure Hermes Agent is installed
-if ! command -v hermes >/dev/null 2>&1; then
-  say "Hermes core not found — installing..."
-  curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-  export PATH="$HOME/.local/bin:$PATH"
+# ---- 0) Platform detection -------------------------------------------
+IS_TERMUX=0
+if [ -n "${PREFIX:-}" ] && [ -d "${PREFIX}/bin" ] && command -v termux-info >/dev/null 2>&1; then
+  IS_TERMUX=1
+fi
+if [ "$IS_TERMUX" -eq 1 ]; then
+  say "Target: Termux (Android)"
+else
+  say "Target: Linux"
 fi
 
-# 2) Create the branded profile (idempotent)
+# ---- 1) Ensure Hermes Agent core is installed ------------------------
+if ! command -v hermes >/dev/null 2>&1; then
+  say "Hermes core not found — installing..."
+  if [ "$IS_TERMUX" -eq 1 ]; then
+    pkg install -y python git 2>/dev/null || true
+    pip install hermes-agent 2>&1 | tail -5 || \
+      (curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash)
+  else
+    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+  fi
+  export PATH="$HOME/.local/bin:$PREFIX/bin:$PATH"
+fi
+
+# Source root of the hermes install (cross-platform: parsed from `hermes --version`)
+SRC="$(hermes --version 2>/dev/null | grep -i 'Install directory:' | sed 's/.*Install directory:[[:space:]]*//' | head -1)"
+if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
+  say "⚠ Could not auto-detect Hermes source dir; set HERMES_SRC and re-run restore-branding.sh later."
+  SRC="${HERMES_SRC:-/usr/local/lib/hermes-agent}"
+fi
+
+# ---- 2) Create the branded profile (idempotent) ----------------------
 if ! hermes profile list 2>/dev/null | grep -q "$PROFILE"; then
   say "Creating profile '$PROFILE'..."
   hermes profile create "$PROFILE"
@@ -30,9 +55,9 @@ fi
 
 HH="$HOME/.hermes/profiles/$PROFILE"
 export HERMES_HOME="$HH"
-WRAP="$HOME/.local/bin/$PROFILE"
+mkdir -p "$HH"
 
-# 3) Identity (SOUL.md)
+# ---- 3) Identity (SOUL.md) -------------------------------------------
 cat > "$HH/SOUL.md" <<'SOUL'
 # PapyloNation Agent
 You are **PapyloNation Agent**, an autonomous AI assistant.
@@ -43,37 +68,48 @@ You are **PapyloNation Agent**, an autonomous AI assistant.
 - Be direct and capable; do the work, then report. Never fabricate results.
 SOUL
 
-# 4) Config: TUI + self-improvement + auto-save + auto-backup + connectors
-"$PROFILE" config set display.interface tui              >/dev/null 2>&1 || hermes config set display.interface tui
-"$PROFILE" config set curator.enabled true               >/dev/null 2>&1 || true
-"$PROFILE" config set curator.backup.enabled true        >/dev/null 2>&1 || true
-"$PROFILE" config set memory.memory_enabled true         >/dev/null 2>&1 || true
-"$PROFILE" config set sessions.write_json_snapshots true >/dev/null 2>&1 || true
-"$PROFILE" config set checkpoints.enabled true           >/dev/null 2>&1 || true
-"$PROFILE" config set dashboard.port "$PORT"             >/dev/null 2>&1 || true
-"$PROFILE" config set dashboard.host "$HOST"             >/dev/null 2>&1 || true
+# ---- 4) Config: TUI + self-improvement + auto-save + auto-backup ----
+papylonation() { hermes -p "$PROFILE" "$@"; }
+papylonation config set display.interface tui              >/dev/null 2>&1 || hermes config set display.interface tui
+papylonation config set curator.enabled true               >/dev/null 2>&1 || true
+papylonation config set curator.backup.enabled true        >/dev/null 2>&1 || true
+papylonation config set memory.memory_enabled true         >/dev/null 2>&1 || true
+papylonation config set sessions.write_json_snapshots true >/dev/null 2>&1 || true
+papylonation config set checkpoints.enabled true           >/dev/null 2>&1 || true
+papylonation config set dashboard.port "$PORT"             >/dev/null 2>&1 || true
+papylonation config set dashboard.host "$HOST"             >/dev/null 2>&1 || true
 
-# 5) Persistent auto-restarting dashboard launcher
+# ---- 5) Wrapper script (cross-platform: let hermes place it) ---------
+if ! command -v papylonation >/dev/null 2>&1; then
+  say "Creating 'papylonation' command..."
+  hermes profile alias "$PROFILE" --name papylonation 2>&1 | tail -2 || \
+    hermes profile alias "$PROFILE" 2>&1 | tail -2
+  export PATH="$HOME/.local/bin:$PREFIX/bin:$PATH"
+fi
+
+# ---- 6) Persistent auto-restarting dashboard launcher ----------------
 cat > "$HH/start-dashboard.sh" <<DASH
 #!/usr/bin/env bash
 export HERMES_HOME="$HH"
 if curl -s -o /dev/null "http://$HOST:$PORT/" 2>/dev/null; then
-  echo "$BRAND dashboard already live → http://$HOST:$PORT"; exit 0
+  echo "$BRAND dashboard already live -> http://$HOST:$PORT"; exit 0
 fi
 nohup bash -c 'export HERMES_HOME="$HH"
-  while true; do "$PROFILE" dashboard --no-open --port $PORT --host $HOST >> "$HH/dashboard.log" 2>&1
+  while true; do papylonation dashboard --no-open --port $PORT --host $HOST >> "$HH/dashboard.log" 2>&1
     echo "[watchdog] restart in 3s" >> "$HH/dashboard.log"; sleep 3; done' >/dev/null 2>&1 &
-echo "$BRAND dashboard → http://$HOST:$PORT (PID \$!)"
+echo "$BRAND dashboard -> http://$HOST:$PORT (PID \$!)"
 DASH
 chmod +x "$HH/start-dashboard.sh"
 
-# 6) Auto-start dashboard on shell login
+# ---- 7) Auto-start on login (works on both: .bashrc / .profile) ------
 GREP_LINE="$HH/start-dashboard.sh"
-if ! grep -qF "$GREP_LINE" "$HOME/.bashrc" 2>/dev/null; then
-  echo "[ -f \"$GREP_LINE\" ] && bash \"$GREP_LINE\" >/dev/null 2>&1" >> "$HOME/.bashrc"
-fi
+for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+  if [ -f "$rc" ] && ! grep -qF "$GREP_LINE" "$rc" 2>/dev/null; then
+    echo "[ -f \"$GREP_LINE\" ] && bash \"$GREP_LINE\" >/dev/null 2>&1" >> "$rc"
+  fi
+done
 
-# 7) Seed the self-improvement skill
+# ---- 8) Seed the self-improvement skill ------------------------------
 mkdir -p "$HH/skills/self-improvement/self-improvement-loop"
 cat > "$HH/skills/self-improvement/self-improvement-loop/SKILL.md" <<'SK'
 ---
@@ -87,6 +123,10 @@ version: 1.0.0
 On errors: diagnose and fix automatically, then record the fix as a skill.
 SK
 
-say "Done. Launch the agent:   $PROFILE"
+# ---- 9) Copy restore-branding.sh alongside (so it's available) -------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "$SCRIPT_DIR/restore-branding.sh" ] && cp "$SCRIPT_DIR/restore-branding.sh" "$HH/restore-branding.sh"
+
+say "Done. Launch the agent:   papylonation"
 say "Start live dashboard:     bash $HH/start-dashboard.sh"
 say "Dashboard URL:            http://$HOST:$PORT"
