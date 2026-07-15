@@ -10,7 +10,23 @@
 # =====================================================================
 set -euo pipefail
 
-SRC="/usr/local/lib/hermes-agent"
+# Source root: prefer explicit override, else parse from `hermes --version`
+# (cross-platform: Termux installs under $PREFIX, Linux under /usr/local/lib, etc.)
+if [ -n "${HERMES_SRC:-}" ] && [ -d "$HERMES_SRC" ]; then
+  SRC="$HERMES_SRC"
+else
+  SRC="$(hermes --version 2>/dev/null | grep -i 'Install directory:' | sed 's/.*Install directory:[[:space:]]*//' | head -1)"
+fi
+if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
+  echo "ERROR: could not locate Hermes install dir. Set HERMES_SRC=/path and re-run." >&2
+  exit 1
+fi
+# venv python (used for the banner-label verify step)
+PYBIN="$SRC/venv/bin/python"
+[ -x "$PYBIN" ] || PYBIN="python3"
+# node/npx for the web rebuild
+NX="npx"
+command -v npx >/dev/null 2>&1 || NX="node_modules/.bin/vite"
 say() { printf '\033[1;33m⚕ %s\033[0m\n' "$*"; }
 repl() { # file  old  new   (only replaces if old still present)
   local f="$1" o="$2" n="$3"
@@ -65,10 +81,10 @@ repl "$SRC/web/src/App.tsx" \
 
 # 5) Rebuild the web bundle so the dashboard serves the rebrand
 say "Rebuilding dashboard bundle ..."
-( cd "$SRC/web" && npx vite build ) && say "Dashboard rebuilt."
+( cd "$SRC/web" && $NX vite build ) && say "Dashboard rebuilt."
 
 # 6) Verify banner label is branded
-if "$SRC/venv/bin/python" -c "from hermes_cli import banner; print(banner.format_banner_version_label())" 2>/dev/null | grep -q "PapyloNation Agent"; then
+if "$PYBIN" -c "from hermes_cli import banner; print(banner.format_banner_version_label())" 2>/dev/null | grep -q "PapyloNation Agent"; then
   say "✓ CLI banner shows PapyloNation Agent"
 else
   say "⚠ Could not confirm CLI banner label — check manually"
