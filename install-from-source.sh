@@ -38,7 +38,13 @@ fi
 # ---- 1) Dependencies -------------------------------------------------
 say "Ensuring git + python ..."
 if [ "$IS_TERMUX" -eq 1 ]; then
-  pkg install -y git python 2>/dev/null || true
+  # Termux has no PyPI wheels for aarch64-linux-android, so Rust/C extensions
+  # (cryptography, Pillow, pydantic-core, ...) must come from prebuilt pkg
+  # packages — building them from source needs Rust + OpenSSL headers and is
+  # slow/fragile. Install the binary deps, then use --system-site-packages so
+  # pip reuses them instead of recompiling.
+  pkg install -y git python python-cryptography python-pillow \
+      rust binutils build-essential openssl libffi 2>&1 | tail -3 || true
 else
   command -v git >/dev/null 2>&1 || die "git not found — install it (e.g. apt install git) and re-run."
 fi
@@ -107,13 +113,24 @@ PYCHK
 fi
 if [ "$NEED_VENV" -eq 1 ]; then
   rm -rf venv
-  "$PY" -m venv venv
+  # On Termux, expose pkg-provided compiled modules (cryptography, Pillow, ...)
+  # to the venv so pip won't try to build them from source.
+  if [ "$IS_TERMUX" -eq 1 ]; then
+    "$PY" -m venv --system-site-packages venv
+  else
+    "$PY" -m venv venv
+  fi
 fi
 # shellcheck disable=SC1091
 . venv/bin/activate
 python -m pip install -q --upgrade pip 2>&1 | tail -1 || true
 # Deep-renamed fork ships prebuilt web_dist/tui_dist, so no node build needed.
-python -m pip install -e . 2>&1 | tail -5 || die "pip install failed — see output above."
+# On Termux, tell Rust builds to target the OpenSSL headers pkg provides, in case
+# a transitive still needs compiling (e.g. no matching pkg version).
+if [ "$IS_TERMUX" -eq 1 ]; then
+  export OPENSSL_DIR="${PREFIX}" CARGO_BUILD_JOBS=1
+fi
+python -m pip install -e . 2>&1 | tail -8 || die "pip install failed — see output above."
 
 # ---- 4) Verify the native CLI ----------------------------------------
 BIN="$SRC/venv/bin/papylonation"
