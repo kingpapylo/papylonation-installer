@@ -40,11 +40,41 @@ say "Ensuring git + python ..."
 if [ "$IS_TERMUX" -eq 1 ]; then
   pkg install -y git python 2>/dev/null || true
 else
-  command -v git    >/dev/null 2>&1 || die "git not found — install it (e.g. apt install git) and re-run."
-  command -v python3 >/dev/null 2>&1 || die "python3 not found — install it and re-run."
+  command -v git >/dev/null 2>&1 || die "git not found — install it (e.g. apt install git) and re-run."
 fi
-PY="$(command -v python3 || command -v python)"
-[ -n "$PY" ] || die "No python interpreter found."
+
+# The fork's pyproject requires Python >=3.11,<3.14. Pick a compatible interpreter.
+# Strategy: try explicit 3.13/3.12/3.11 on PATH; else check the bare python3 is in range;
+# else fall back to uv (installing uv if needed) to provision a managed 3.13.
+compat_py() {  # prints a python path whose version is >=3.11 and <3.14, or nothing
+  local cand
+  for cand in python3.13 python3.12 python3.11; do
+    command -v "$cand" >/dev/null 2>&1 && { command -v "$cand"; return 0; }
+  done
+  for cand in python3 python; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      "$cand" - <<'PYCHK' 2>/dev/null && { command -v "$cand"; return 0; }
+import sys
+raise SystemExit(0 if (3,11) <= sys.version_info < (3,14) else 1)
+PYCHK
+    fi
+  done
+  return 1
+}
+
+PY="$(compat_py || true)"
+if [ -z "$PY" ]; then
+  say "No system Python in range 3.11–3.13 found — provisioning one via uv ..."
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -fsSL https://astral.sh/uv/install.sh | sh 2>&1 | tail -3 || true
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  fi
+  command -v uv >/dev/null 2>&1 || die "Could not obtain uv to provision Python 3.13. Install Python 3.11–3.13 manually and re-run."
+  uv python install 3.13 2>&1 | tail -2 || true
+  PY="$(uv python find 3.13 2>/dev/null)"
+  [ -n "$PY" ] && [ -x "$PY" ] || die "uv failed to provide Python 3.13."
+fi
+say "Using interpreter: $PY ($("$PY" --version 2>&1))"
 
 # ---- 2) Clone (or update) the source fork ----------------------------
 if [ -d "$SRC/.git" ]; then
@@ -62,7 +92,19 @@ fi
 # ---- 3) Virtualenv + editable install --------------------------------
 say "Creating venv + installing (this can take a few minutes) ..."
 cd "$SRC"
-[ -d venv ] || "$PY" -m venv venv
+# Recreate venv if missing or built with an out-of-range Python.
+NEED_VENV=1
+if [ -x venv/bin/python ]; then
+  if venv/bin/python - <<'PYCHK' 2>/dev/null
+import sys
+raise SystemExit(0 if (3,11) <= sys.version_info < (3,14) else 1)
+PYCHK
+  then NEED_VENV=0; fi
+fi
+if [ "$NEED_VENV" -eq 1 ]; then
+  rm -rf venv
+  "$PY" -m venv venv
+fi
 # shellcheck disable=SC1091
 . venv/bin/activate
 python -m pip install -q --upgrade pip 2>&1 | tail -1 || true
@@ -72,7 +114,8 @@ python -m pip install -e . 2>&1 | tail -5 || die "pip install failed — see out
 # ---- 4) Verify the native CLI ----------------------------------------
 BIN="$SRC/venv/bin/papylonation"
 [ -x "$BIN" ] || BIN="$SRC/venv/bin/hermes"   # alias fallback
-"$BIN" --version 2>&1 | head -1 || die "CLI did not boot."
+VER="$("$BIN" --version 2>&1)" || die "CLI did not boot."
+printf '%s\n' "$VER" | head -1
 
 # ---- 5) Symlink onto PATH --------------------------------------------
 if [ "$IS_TERMUX" -eq 1 ]; then LINKDIR="$PREFIX/bin"; else LINKDIR="$HOME/.local/bin"; fi
