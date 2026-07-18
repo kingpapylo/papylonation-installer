@@ -43,19 +43,20 @@ else
   command -v git >/dev/null 2>&1 || die "git not found — install it (e.g. apt install git) and re-run."
 fi
 
-# The fork's pyproject requires Python >=3.11,<3.14. Pick a compatible interpreter.
-# Strategy: try explicit 3.13/3.12/3.11 on PATH; else check the bare python3 is in range;
-# else fall back to uv (installing uv if needed) to provision a managed 3.13.
-compat_py() {  # prints a python path whose version is >=3.11 and <3.14, or nothing
+# The fork's pyproject requires Python >=3.11,<3.15. Pick a compatible interpreter.
+# On Termux the native Python (3.14) is in range and uv has NO aarch64-linux-android
+# builds, so we must use the system interpreter there. Strategy: explicit 3.14→3.11
+# on PATH; else check bare python3 is in range; else (non-Termux only) provision via uv.
+compat_py() {  # prints a python path whose version is >=3.11 and <3.15, or nothing
   local cand
-  for cand in python3.13 python3.12 python3.11; do
+  for cand in python3.14 python3.13 python3.12 python3.11; do
     command -v "$cand" >/dev/null 2>&1 && { command -v "$cand"; return 0; }
   done
   for cand in python3 python; do
     if command -v "$cand" >/dev/null 2>&1; then
       "$cand" - <<'PYCHK' 2>/dev/null && { command -v "$cand"; return 0; }
 import sys
-raise SystemExit(0 if (3,11) <= sys.version_info < (3,14) else 1)
+raise SystemExit(0 if (3,11) <= sys.version_info < (3,15) else 1)
 PYCHK
     fi
   done
@@ -64,12 +65,15 @@ PYCHK
 
 PY="$(compat_py || true)"
 if [ -z "$PY" ]; then
-  say "No system Python in range 3.11–3.13 found — provisioning one via uv ..."
+  if [ "$IS_TERMUX" -eq 1 ]; then
+    die "No Python 3.11–3.14 found. Run: pkg install python"
+  fi
+  say "No system Python in range 3.11–3.14 found — provisioning one via uv ..."
   if ! command -v uv >/dev/null 2>&1; then
     curl -fsSL https://astral.sh/uv/install.sh | sh 2>&1 | tail -3 || true
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
   fi
-  command -v uv >/dev/null 2>&1 || die "Could not obtain uv to provision Python 3.13. Install Python 3.11–3.13 manually and re-run."
+  command -v uv >/dev/null 2>&1 || die "Could not obtain uv. Install Python 3.11–3.14 manually and re-run."
   uv python install 3.13 2>&1 | tail -2 || true
   PY="$(uv python find 3.13 2>/dev/null)"
   [ -n "$PY" ] && [ -x "$PY" ] || die "uv failed to provide Python 3.13."
@@ -97,7 +101,7 @@ NEED_VENV=1
 if [ -x venv/bin/python ]; then
   if venv/bin/python - <<'PYCHK' 2>/dev/null
 import sys
-raise SystemExit(0 if (3,11) <= sys.version_info < (3,14) else 1)
+raise SystemExit(0 if (3,11) <= sys.version_info < (3,15) else 1)
 PYCHK
   then NEED_VENV=0; fi
 fi
