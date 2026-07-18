@@ -43,7 +43,7 @@ if [ "$IS_TERMUX" -eq 1 ]; then
   # packages — building them from source needs Rust + OpenSSL headers and is
   # slow/fragile. Install the binary deps, then use --system-site-packages so
   # pip reuses them instead of recompiling.
-  pkg install -y git python python-cryptography python-pillow \
+  pkg install -y git python python-cryptography python-pillow python-psutil \
       rust binutils build-essential openssl libffi 2>&1 | tail -3 || true
 else
   command -v git >/dev/null 2>&1 || die "git not found — install it (e.g. apt install git) and re-run."
