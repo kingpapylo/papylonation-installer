@@ -156,6 +156,10 @@ pc sessions.write_json_snapshots true
 pc checkpoints.enabled true
 pc dashboard.port "$PORT"
 pc dashboard.host "$HOST"
+# Detect whether a model/provider is already configured; if not, remind the user.
+if ! "$BIN" config get provider 2>/dev/null | grep -qiE "openai|anthropic|openrouter|deepseek|gemini|ollama|custom"; then
+  say "NOTE: no inference provider configured yet — run:  papylonation model"
+fi
 
 # ---- 7) Persistent auto-restarting dashboard launcher ----------------
 LAUNCH="$SRC/start-dashboard.sh"
